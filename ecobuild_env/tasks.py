@@ -25,11 +25,12 @@ def grade_task1(episode_data: List[StepData]) -> float:
     baseline_energy = BASELINE_ALWAYS_ON * len(episode_data)
     energy_score = max(0.0, 1.0 - energy_used / baseline_energy) if baseline_energy > 0 else 0.0
     
+    total_occupied = sum(1 for step in episode_data if step.occupied)
     comfort_violations = sum(
         1 for step in episode_data 
         if step.occupied and not (20.0 <= step.temp <= 22.0)
     )
-    comfort_score = max(0.0, 1.0 - comfort_violations / 10.0)
+    comfort_score = max(0.0, 1.0 - comfort_violations / max(1.0, float(total_occupied)))
     
     return float(0.6 * energy_score + 0.4 * comfort_score)
 
@@ -46,18 +47,20 @@ def grade_task2(episode_data: List[StepData]) -> float:
     energy_score = max(0.0, 1.0 - energy_used / baseline_energy) if baseline_energy > 0 else 0.0
     
     # Comfort compliance
+    total_occupied = sum(1 for step in episode_data if step.occupied)
     comfort_violations = sum(
         1 for step in episode_data 
         if step.occupied and not (20.0 <= step.temp <= 22.0)
     )
-    comfort_score = max(0.0, 1.0 - comfort_violations / 20.0)
+    comfort_score = max(0.0, 1.0 - comfort_violations / max(1.0, float(total_occupied)))
     
     # Lighting efficiency (penalize lights on when vacant)
+    total_unoccupied = sum(1 for step in episode_data if not step.occupied)
     lighting_waste = sum(
         1 for step in episode_data 
         if (not step.occupied) and step.lights_on
     )
-    lighting_score = max(0.0, 1.0 - lighting_waste / 30.0)
+    lighting_score = max(0.0, 1.0 - lighting_waste / max(1.0, float(total_unoccupied)))
     
     return float(0.5 * energy_score + 0.3 * comfort_score + 0.2 * lighting_score)
 
@@ -78,19 +81,18 @@ def grade_task3(episode_data: List[StepData]) -> float:
         
     # Advanced energy efficiency
     energy_used = sum(step.energy for step in episode_data)
-    baseline_energy = BASELINE_SMART_THERMOSTAT * len(episode_data)
-    energy_saved_pct = max(0.0, (baseline_energy - energy_used) / baseline_energy) if baseline_energy > 0 else 0.0
-    energy_score = min(1.0, energy_saved_pct * 2.0)  # 50% savings = full score
+    max_energy = BASELINE_ALWAYS_ON * len(episode_data)
+    energy_score = max(0.0, 1.0 - energy_used / max_energy) if max_energy > 0 else 0.0
     
     # Strict comfort compliance
+    total_occupied = sum(1 for step in episode_data if step.occupied)
     comfort_violations = sum(
         1 for step in episode_data 
         if step.occupied and not (20.0 <= step.temp <= 22.0)
     )
-    total_occupied = sum(1 for step in episode_data if step.occupied)
     
     if total_occupied > 0:
-        comfort_score = max(0.0, 1.0 - comfort_violations / (total_occupied * 0.1))
+        comfort_score = max(0.0, 1.0 - comfort_violations / float(total_occupied))
     else:
         comfort_score = 1.0
         
@@ -98,10 +100,11 @@ def grade_task3(episode_data: List[StepData]) -> float:
     anticipation_score = calculate_anticipation_bonus(episode_data)
     
     # Penalty for energy waste during vacancy
+    total_unoccupied = sum(1 for step in episode_data if not step.occupied)
     vacancy_heating = sum(
         1 for step in episode_data if (not step.occupied) and step.heater_on
     )
-    vacancy_score = max(0.0, 1.0 - vacancy_heating / (len(episode_data) * 0.2)) if len(episode_data) > 0 else 1.0
+    vacancy_score = max(0.0, 1.0 - vacancy_heating / max(1.0, float(total_unoccupied))) if len(episode_data) > 0 else 1.0
     
     return float(
         0.4 * energy_score + 
