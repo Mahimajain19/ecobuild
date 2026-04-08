@@ -1,0 +1,40 @@
+name: ecobuild
+version: 1.0.0
+description: "Smart building energy management RL environment for OpenEnv hackathon"
+author: "EcoBuild Team"
+license: "MIT"
+tags:
+  - energy
+  - building-management
+  - hvac
+  - sustainability
+  - real-world
+
+observation_space:
+  type: object
+  properties:
+    indoor_temperature: {type: number}
+    outdoor_temperature: {type: number}
+    occupancy: {type: integer}
+    hour_of_day: {type: integer}
+    day_of_week: {type: integer}
+    heater_status: {type: integer}
+    lights_status: {type: integer}
+    time_step: {type: integer}
+
+action_space:
+  type: object
+  properties:
+    heater_control: {type: integer, minimum: 0, maximum: 1}
+    lights_control: {type: integer, minimum: 0, maximum: 1}
+
+tasks:
+  - name: basic_thermostat
+    difficulty: easy
+    description: "Maintain comfort with fixed conditions"
+  - name: day_night_control
+    difficulty: medium
+    description: "Multi-actuator control with weather cycles"
+  - name: multiday_optimization
+    difficulty: hard
+    description: "Week-long optimization with uncertainty"
