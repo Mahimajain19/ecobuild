@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from typing import List
 from ecobuild_env.environment import EcoBuildEnv
@@ -51,23 +52,22 @@ class OpenAIAgent:
             return BuildingAction(heater_control=0, lights_control=0)
 
 def run_inference(task_name: str):
-    import sys
-    api_base_url = os.environ.get("API_BASE_URL", "")
-    model_name = os.environ.get("MODEL_NAME", "baseline-rule-based")
-    hf_token = os.environ.get("HF_TOKEN", "")
+    API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+    MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+    HF_TOKEN = os.getenv("HF_TOKEN")
 
     # Configure agent type based on environment parameters
-    if model_name != "baseline-rule-based" and api_base_url and hf_token:
+    if MODEL_NAME != "baseline-rule-based" and API_BASE_URL and HF_TOKEN:
         try:
-            agent = OpenAIAgent(api_base_url, model_name, hf_token)
+            agent = OpenAIAgent(API_BASE_URL, MODEL_NAME, HF_TOKEN)
         except ImportError:
-            model_name = "baseline-rule-based (OpenAI missing)"
+            MODEL_NAME = "baseline-rule-based (OpenAI missing)"
             agent = BaselineAgent()
     else:
-        model_name = "baseline-rule-based"
+        MODEL_NAME = "baseline-rule-based"
         agent = BaselineAgent()
 
-    print(f"[START] task={task_name} env=ecobuild model={model_name}")
+    print(f"[START] task={task_name} env=ecobuild model={MODEL_NAME}")
     sys.stdout.flush()
 
     env = EcoBuildEnv(task_name=task_name)
