@@ -1,3 +1,12 @@
+---
+title: EcoBuild
+emoji: 🏢
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 <div align="center">
 
 # ⚡ EcoBuild
