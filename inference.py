@@ -192,7 +192,8 @@ def run_inference(task_name: str, config: dict):
         MODEL_NAME = "baseline-rule-based"
         agent = BaselineAgent()
 
-    print(f"[START] task={task_name} model={MODEL_NAME} seed={SEED}")
+    BENCHMARK = "ecobuild"
+    print(f"[START] task={task_name} env={BENCHMARK} model={MODEL_NAME}", flush=True)
 
     env = EcoBuildEnvironment()
     obs = env.reset(task_name=task_name, seed=SEED)
@@ -205,20 +206,17 @@ def run_inference(task_name: str, config: dict):
     while not done:
         try:
             action = agent.get_action(obs, COMFORT_MIN, COMFORT_MAX)
+            action_str = f"h={action.heater_control},a={action.ac_control},l={action.lights_control},f={action.fan_speed},g={action.genset_control}"
             obs, reward, done, info = env.step(action)
             rewards.append(reward)
-            print(
-                f"[STEP] step={step_n} "
-                f"temp={obs.indoor_temperature:.1f}C "
-                f"occ={obs.occupancy_count} "
-                f"reward={reward:.3f} "
-                f"done={done} "
-                f"cost=INR{info.get('total_cost_inr', 0):.1f}"
-            )
+            done_val = str(done).lower()
+            print(f"[STEP] step={step_n+1} action={action_str} reward={reward:.2f} done={done_val} error=null", flush=True)
         except Exception as e:
             logger.error(f"Step error at step {step_n}: {e}")
             success = False
             done = True
+            error_val = str(e).replace('\n', ' ')
+            print(f"[STEP] step={step_n+1} action=error reward=0.00 done=true error={error_val}", flush=True)
         step_n += 1
 
     # Grade
@@ -228,13 +226,9 @@ def run_inference(task_name: str, config: dict):
     except Exception as e:
         logger.error(f"Grading error: {e}")
 
-    rewards_summary = ",".join(f"{r:.3f}" for r in rewards[:5]) + ("..." if len(rewards) > 5 else "")
-    print(
-        f"[END] success={success} steps={step_n} score={final_score:.4f} "
-        f"total_cost=INR{env.total_cost_inr:.1f} "
-        f"co2={env.total_co2_kg:.2f}kg "
-        f"rewards_sample=[{rewards_summary}]"
-    )
+    success_val = str(success).lower()
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={success_val} steps={step_n} score={final_score:.3f} rewards={rewards_str}", flush=True)
 
     save_episode_results(task_name, final_score, rewards, env.episode_data, SEED, MODEL_NAME)
     return final_score
