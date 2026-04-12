@@ -11,8 +11,6 @@ tags:
 
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Mahimajain19/ecobuild/main/assets/logo.svg" alt="EcoBuild Logo" width="120" height="120" />
-
 # EcoBuild
 
 **Production-Grade Smart Building Energy Management · OpenEnv RL Environment**
@@ -814,5 +812,11 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 [![HuggingFace Space](https://img.shields.io/badge/Live%20Space-ecobuild--energy--env-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/spaces/mahimajain19/ecobuild-energy-env)
 [![GitHub](https://img.shields.io/badge/GitHub-Mahimajain19%2Fecobuild-181717?style=for-the-badge&logo=github)](https://github.com/Mahimajain19/ecobuild)
+
+<br/>
+
+---
+
+**Project by [Mahima Jain](https://github.com/Mahimajain19)**
 
 </div>
