@@ -172,18 +172,36 @@ def save_episode_results(task_name: str, final_score: float, rewards: List[float
 
 def run_inference(task_name: str, config: dict):
     """Run one full episode for a given task and config."""
-    API_BASE_URL = config.get("llm_api_base", os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"))
-    MODEL_NAME = config.get("llm_model", os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct"))
-    HF_TOKEN = config.get("llm_api_key", os.getenv("HF_TOKEN"))
+    # Injected env vars from the validator take HIGHEST priority.
+    # Fall back to scenario_config.json values, then hardcoded defaults.
+    API_BASE_URL = (
+        os.getenv("API_BASE_URL")
+        or config.get("llm_api_base")
+        or "https://router.huggingface.co/v1"
+    )
+    API_KEY = (
+        os.getenv("API_KEY")
+        or os.getenv("HF_TOKEN")
+        or config.get("llm_api_key")
+    )
+    MODEL_NAME = (
+        os.getenv("MODEL_NAME")
+        or config.get("llm_model")
+        or "Qwen/Qwen2.5-72B-Instruct"
+    )
     SEED = config.get("seed", None)
     COMFORT_MIN = config.get("comfort_range", [21.0, 24.0])[0]
     COMFORT_MAX = config.get("comfort_range", [21.0, 24.0])[1]
 
-    # Choose agent
-    if MODEL_NAME != "baseline-rule-based" and HF_TOKEN:
+    logger.info(f"API_BASE_URL={API_BASE_URL}")
+    logger.info(f"MODEL_NAME={MODEL_NAME}")
+    logger.info(f"API_KEY present: {bool(API_KEY)}")
+
+    # Choose agent — use LLM if we have a base URL and key
+    if MODEL_NAME != "baseline-rule-based" and API_KEY and API_BASE_URL:
         try:
-            agent = OpenAIAgent(API_BASE_URL, MODEL_NAME, HF_TOKEN)
-            logger.info(f"Using LLM agent: {MODEL_NAME}")
+            agent = OpenAIAgent(API_BASE_URL, MODEL_NAME, API_KEY)
+            logger.info(f"Using LLM agent: {MODEL_NAME} via {API_BASE_URL}")
         except Exception as e:
             logger.warning(f"LLM agent init failed ({e}), falling back to rule-based")
             MODEL_NAME = "baseline-rule-based"

@@ -2,10 +2,9 @@
   "task_name": "basic_thermostat",
   "seed": 42,
   "comfort_range": [20.0, 22.0],
-  "llm_api_base": "https://router.huggingface.co/v1",
-  "llm_model": "Qwen/Qwen2.5-72B-Instruct",
-  "llm_api_key": "${HF_TOKEN}",
-  "llm_provider": "huggingface",
+  "llm_api_base": null,
+  "llm_model": null,
+  "llm_api_key": null,
   "reward_weights_override": null,
-  "_comment": "Set llm_api_key to null to use HF_TOKEN env var. Set task_name to null to run all tasks."
+  "_comment": "API_BASE_URL, API_KEY, and MODEL_NAME are injected by the validator as environment variables and take priority over these values. Set these only for local testing overrides."
 }
