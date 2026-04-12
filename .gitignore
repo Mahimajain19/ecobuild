@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+uv.lock
+outputs/
+logs/
+evals/
+*.egg-info/
+.env
+.env.*
+client_notebooks/
+verify_phase*.py
+fix_markdown.py
+.pytest_cache/

@@ -5,16 +5,31 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ecobuild"
 version = "1.0.0"
-description = "Smart building energy management RL environment"
+description = "Smart building energy management RL environment for India"
+requires-python = ">=3.10"
 dependencies = [
     "openenv-core>=0.1.0",
     "pydantic>=2.0.0",
     "numpy>=1.24.0",
+    "scipy>=1.10.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "openai>=1.0.0",
-    "python-dotenv>=1.0.0"
+    "python-dotenv>=1.0.0",
+    "websockets>=11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
 ]
 
 [project.scripts]
 server = "server.app:main"
+ecobuild = "inference:run_inference"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

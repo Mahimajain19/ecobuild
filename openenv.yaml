@@ -1,40 +1,125 @@
 name: ecobuild
 version: 1.0.0
-description: "Smart building energy management RL environment for OpenEnv hackathon"
+api_version: "v1"
+description: "Smart building energy management RL environment — India-specific, OpenEnv-compliant"
 author: "EcoBuild Team"
 license: "MIT"
+india_specific: true
 tags:
   - energy
   - building-management
   - hvac
   - sustainability
   - real-world
+  - india
+  - load-shedding
+  - solar-battery
+
+features:
+  - thermal_mass
+  - tou_tariffs
+  - load_shedding
+  - solar_battery
+  - aqi_modeling
+  - festival_calendar
+  - genset
+  - seed_control
+  - episode_tracking
 
 observation_space:
   type: object
   properties:
-    indoor_temperature: {type: number}
-    outdoor_temperature: {type: number}
-    occupancy: {type: integer}
-    hour_of_day: {type: integer}
-    day_of_week: {type: integer}
-    heater_status: {type: integer}
-    lights_status: {type: integer}
-    time_step: {type: integer}
+    # Thermal
+    indoor_temperature:         {type: number, minimum: -5, maximum: 50}
+    outdoor_temperature:        {type: number, minimum: -5, maximum: 50}
+    humidity:                   {type: number, minimum: 10, maximum: 100}
+    outdoor_humidity:           {type: number, minimum: 10, maximum: 100}
+    # Occupancy
+    occupancy_count:            {type: integer, minimum: 0, maximum: 100}
+    predicted_occupancy_2h:     {type: integer, minimum: 0, maximum: 100}
+    # Time
+    hour_of_day:                {type: integer, minimum: 0, maximum: 23}
+    day_of_week:                {type: integer, minimum: 0, maximum: 6}
+    time_step:                  {type: integer, minimum: 0}
+    # Actuator states
+    heater_status:              {type: integer, minimum: 0, maximum: 1}
+    ac_status:                  {type: integer, minimum: 0, maximum: 1}
+    lights_status:              {type: integer, minimum: 0, maximum: 1}
+    fan_speed:                  {type: integer, minimum: 0, maximum: 2}
+    fresh_air_damper:           {type: integer, minimum: 0, maximum: 3}
+    # Energy
+    cumulative_energy_kwh:      {type: number, minimum: 0}
+    electricity_price_normalized: {type: number, minimum: 0, maximum: 1}
+    # Grid (India-specific)
+    grid_available:             {type: integer, minimum: 0, maximum: 1}
+    grid_voltage:               {type: number, minimum: 0, maximum: 280}
+    predicted_next_cut_minutes: {type: integer, minimum: 0}
+    # Solar & Battery
+    solar_generation_kw:        {type: number, minimum: 0}
+    battery_soc_pct:            {type: number, minimum: 0, maximum: 100}
+    # Genset
+    genset_available:           {type: integer, minimum: 0, maximum: 1}
+    genset_fuel_pct:            {type: number, minimum: 0, maximum: 100}
+    # Air Quality (India-specific)
+    outdoor_aqi:                {type: number, minimum: 0, maximum: 500}
+    indoor_aqi:                 {type: number, minimum: 0, maximum: 500}
+    indoor_co2_ppm:             {type: number, minimum: 400, maximum: 5000}
+    # Festival (India-specific)
+    days_until_next_festival:   {type: integer, minimum: 0}
+    festival_occupancy_mult:    {type: number, minimum: 0}
 
 action_space:
   type: object
   properties:
-    heater_control: {type: integer, minimum: 0, maximum: 1}
-    lights_control: {type: integer, minimum: 0, maximum: 1}
+    heater_control:             {type: integer, minimum: 0, maximum: 1, description: "0=off, 1=on"}
+    ac_control:                 {type: integer, minimum: 0, maximum: 1, description: "0=off, 1=on"}
+    lights_control:             {type: integer, minimum: 0, maximum: 1, description: "0=off, 1=on"}
+    fan_speed:                  {type: integer, minimum: 0, maximum: 2, description: "0=off, 1=low, 2=high"}
+    fresh_air_damper:           {type: integer, minimum: 0, maximum: 3, description: "0=closed, 1=15%, 2=50%, 3=100%"}
+    genset_control:             {type: integer, minimum: 0, maximum: 1, description: "0=off, 1=on (only during grid cuts)"}
+    battery_charge_rate:        {type: integer, minimum: 0, maximum: 2, description: "0=auto, 1=force_charge, 2=force_discharge"}
 
 tasks:
   - name: basic_thermostat
     difficulty: easy
-    description: "Maintain comfort with fixed conditions"
-  - name: day_night_control
+    duration_steps: 144
+    season: winter
+    region: delhi
+    description: "Maintain 20-22°C in Delhi winter office. Thermal mass creates lag — pre-heat before occupancy."
+    grader_weights: {comfort: 0.40, energy_efficiency: 0.40, vacancy_penalty: 0.20}
+    baseline_random: 0.12
+    baseline_rule_based: 0.68
+    target_score: 0.70
+
+  - name: day_night_tou
     difficulty: medium
-    description: "Multi-actuator control with weather cycles"
+    duration_steps: 144
+    season: summer
+    region: delhi
+    description: "Delhi summer with TOU pricing. Peak ₹8/kWh (6-10PM) vs off-peak ₹3/kWh. Pre-cool in cheap morning hours."
+    grader_weights: {energy_cost_inr: 0.30, comfort: 0.30, tou_awareness: 0.25, vacancy_penalty: 0.15}
+    baseline_random: 0.08
+    baseline_rule_based: 0.45
+    target_score: 0.65
+
+  - name: load_shedding_optimizer
+    difficulty: medium_hard
+    duration_steps: 288
+    season: monsoon
+    region: mumbai
+    description: "Mumbai monsoon, 5h/day cuts. Diesel genset at ₹35/kWh. Pre-condition before cuts and manage genset use."
+    grader_weights: {comfort_during_cuts: 0.40, genset_cost: 0.30, pre_conditioning: 0.30}
+    baseline_random: 0.05
+    baseline_rule_based: 0.30
+    target_score: 0.55
+
   - name: multiday_optimization
     difficulty: hard
-    description: "Week-long optimization with uncertainty"
+    duration_steps: 1008
+    season: summer
+    region: delhi
+    description: "7-day Delhi with solar+battery, TOU, festival (day 4), AQI smog event (day 6). Minimize cost+CO2."
+    grader_weights: {total_cost_inr: 0.30, comfort: 0.30, co2_emissions: 0.20, anticipation: 0.10, constraint_free: 0.10}
+    baseline_random: 0.04
+    baseline_rule_based: 0.28
+    target_score: 0.50

@@ -1,133 +1,263 @@
+"""
+EcoBuild Inference Runner.
+Supports baseline rule-based agent and LLM agent via OpenAI-compatible API.
+Reads config from scenario_config.json and saves episode results to outputs/evals/.
+"""
+
 import os
 import sys
 import json
-from typing import List
-from ecobuild_env.environment import EcoBuildEnv
+import logging
+from typing import List, Optional
+from pathlib import Path
+from datetime import datetime
+
+from ecobuild_env.environment import EcoBuildEnvironment
 from ecobuild_env.models import BuildingAction, BuildingObservation
-from ecobuild_env.tasks import StepData, evaluate_episode
+from ecobuild_env.tasks import StepData, evaluate_episode, evaluate_episode_breakdown
+
+# ─────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s [%(levelname)s] ecobuild | %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger("ecobuild")
+
+
+# ─────────────────────────────────────────────
+# Agents
+# ─────────────────────────────────────────────
 
 class BaselineAgent:
-    def get_action(self, obs: BuildingObservation) -> BuildingAction:
+    """
+    Rule-based agent: simple thermostat logic.
+    Heater on when cold, AC on when hot and occupied, lights on when occupied.
+    Turns off all equipment when vacant.
+    """
+
+    def get_action(self, obs: BuildingObservation, comfort_min: float = 21.0, comfort_max: float = 24.0) -> BuildingAction:
+        occupied = obs.occupancy_count > 0
+        heater = 1 if obs.indoor_temperature < comfort_min and not obs.ac_status else 0
+        ac = 1 if obs.indoor_temperature > comfort_max and occupied else 0
+        lights = 1 if occupied else 0
+        fan = 1 if occupied and obs.indoor_co2_ppm > 800 else 0
+        damper = 1 if obs.indoor_co2_ppm > 1000 else 0
+        genset = 1 if not obs.grid_available and occupied else 0
         return BuildingAction(
-            heater_control=1 if obs.indoor_temperature < 20.0 else 0,
-            lights_control=1 if obs.occupancy == 1 else 0
+            heater_control=heater,
+            ac_control=ac,
+            lights_control=lights,
+            fan_speed=fan,
+            fresh_air_damper=damper,
+            genset_control=genset,
+            battery_charge_rate=0,
         )
 
+
 class OpenAIAgent:
-    def __init__(self, api_base_url, model_name, api_key):
+    """LLM-based agent using OpenAI-compatible API."""
+
+    SYSTEM_PROMPT = (
+        "You are an intelligent building energy management system controlling HVAC and lighting. "
+        "Your goal: minimize energy cost while maintaining occupant comfort (stay in comfort zone). "
+        "During power cuts, use genset only for critical loads. Pre-cool/pre-heat before occupancy. "
+        "Respond ONLY with valid JSON matching the action schema."
+    )
+
+    def __init__(self, api_base_url: str, model_name: str, api_key: str):
         from openai import OpenAI
         self.client = OpenAI(base_url=api_base_url, api_key=api_key)
         self.model_name = model_name
 
-    def get_action(self, obs: BuildingObservation) -> BuildingAction:
-        prompt = (f"Current State: Temp {obs.indoor_temperature}C, Occupied: {obs.occupancy}, "
-                  f"Hour: {obs.hour_of_day}. Maintain 20-22C when occupied. Decide action as JSON with "
-                  f"'heater_control' (0 or 1) and 'lights_control' (0 or 1).")
-        
+    def get_action(self, obs: BuildingObservation, comfort_min: float = 21.0, comfort_max: float = 24.0) -> BuildingAction:
+        state_summary = (
+            f"Indoor: {obs.indoor_temperature}°C (target {comfort_min}-{comfort_max}°C), "
+            f"Humidity: {obs.humidity}%, "
+            f"Occupants: {obs.occupancy_count} (predicted in 2h: {obs.predicted_occupancy_2h}), "
+            f"Hour: {obs.hour_of_day}:00, "
+            f"Grid: {'ON' if obs.grid_available else 'OFF (POWER CUT)'}, "
+            f"Voltage: {obs.grid_voltage}V, "
+            f"Tariff: {'peak ₹8/kWh (18-22h)' if 18 <= obs.hour_of_day < 22 else 'normal/off-peak'}, "
+            f"Next cut in: {obs.predicted_next_cut_minutes} min, "
+            f"Solar: {obs.solar_generation_kw}kW, Battery: {obs.battery_soc_pct}%, "
+            f"Outdoor AQI: {obs.outdoor_aqi:.0f}, Indoor CO2: {obs.indoor_co2_ppm:.0f}ppm, "
+            f"Festival mult: {obs.festival_occupancy_mult}x."
+        )
+
+        prompt = (
+            f"Current State: {state_summary}\n\n"
+            f"Decide the next action. Return JSON with keys:\n"
+            f"heater_control (0/1), ac_control (0/1), lights_control (0/1), "
+            f"fan_speed (0/1/2), fresh_air_damper (0/1/2/3), "
+            f"genset_control (0/1 — only use if grid=OFF), battery_charge_rate (0/1/2)"
+        )
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are an HVAC/lighting controller. Output perfectly valid JSON matching the requested structure."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=0.0,
-                timeout=10.0  # 10s timeout per action
+                timeout=15.0,
             )
             content = response.choices[0].message.content.strip()
-            
-            # Clean possible markdown formatting
             if content.startswith("```json"):
-                content = content[7:-3]
-            elif content.startswith("```"):
-                content = content[3:-3]
-                
-            data = json.loads(content)
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+
+            data = json.loads(content.strip())
             return BuildingAction(
                 heater_control=int(data.get("heater_control", 0)),
-                lights_control=int(data.get("lights_control", 0))
+                ac_control=int(data.get("ac_control", 0)),
+                lights_control=int(data.get("lights_control", 0)),
+                fan_speed=int(data.get("fan_speed", 0)),
+                fresh_air_damper=int(data.get("fresh_air_damper", 1)),
+                genset_control=int(data.get("genset_control", 0)),
+                battery_charge_rate=int(data.get("battery_charge_rate", 0)),
             )
         except Exception as e:
-            # Fallback pattern on API or parse error
-            return BuildingAction(heater_control=0, lights_control=0)
+            logger.warning(f"LLM action parse failed: {e} — using fallback")
+            return BuildingAction(heater_control=0, ac_control=0, lights_control=0)
 
-def run_inference(task_name: str):
-    API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-    MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-    HF_TOKEN = os.getenv("HF_TOKEN")
 
-    # Configure agent type based on environment parameters
-    if MODEL_NAME != "baseline-rule-based" and API_BASE_URL and HF_TOKEN:
+# ─────────────────────────────────────────────
+# Output Saving
+# ─────────────────────────────────────────────
+
+def save_episode_results(task_name: str, final_score: float, rewards: List[float],
+                         episode_data: List[StepData], seed: Optional[int], model_name: str):
+    """Save episode results to outputs/evals/ as JSON."""
+    out_dir = Path("outputs/evals")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    fname = out_dir / f"{task_name}_{timestamp}.json"
+
+    try:
+        breakdown = evaluate_episode_breakdown(task_name, episode_data)
+    except Exception:
+        breakdown = {}
+
+    result = {
+        "task_name": task_name,
+        "timestamp": timestamp,
+        "model": model_name,
+        "seed": seed,
+        "final_score": round(final_score, 4),
+        "num_steps": len(rewards),
+        "total_reward": round(sum(rewards), 4),
+        "mean_reward": round(sum(rewards) / max(1, len(rewards)), 4),
+        "min_reward": round(min(rewards) if rewards else 0, 4),
+        "max_reward": round(max(rewards) if rewards else 0, 4),
+        "score_breakdown": breakdown,
+    }
+
+    with open(fname, "w") as f:
+        json.dump(result, f, indent=2)
+    logger.info(f"Episode saved → {fname}")
+
+
+# ─────────────────────────────────────────────
+# Main Runner
+# ─────────────────────────────────────────────
+
+def run_inference(task_name: str, config: dict):
+    """Run one full episode for a given task and config."""
+    API_BASE_URL = config.get("llm_api_base", os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"))
+    MODEL_NAME = config.get("llm_model", os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct"))
+    HF_TOKEN = config.get("llm_api_key", os.getenv("HF_TOKEN"))
+    SEED = config.get("seed", None)
+    COMFORT_MIN = config.get("comfort_range", [21.0, 24.0])[0]
+    COMFORT_MAX = config.get("comfort_range", [21.0, 24.0])[1]
+
+    # Choose agent
+    if MODEL_NAME != "baseline-rule-based" and HF_TOKEN:
         try:
             agent = OpenAIAgent(API_BASE_URL, MODEL_NAME, HF_TOKEN)
-        except ImportError:
-            MODEL_NAME = "baseline-rule-based (OpenAI missing)"
+            logger.info(f"Using LLM agent: {MODEL_NAME}")
+        except Exception as e:
+            logger.warning(f"LLM agent init failed ({e}), falling back to rule-based")
+            MODEL_NAME = "baseline-rule-based"
             agent = BaselineAgent()
     else:
         MODEL_NAME = "baseline-rule-based"
         agent = BaselineAgent()
 
-    print(f"[START] task={task_name} env=ecobuild model={MODEL_NAME}")
-    sys.stdout.flush()
+    logger.info(f"START task={task_name} model={MODEL_NAME} seed={SEED}")
 
-    env = EcoBuildEnv(task_name=task_name)
-    obs = env.reset()
-    
+    env = EcoBuildEnvironment()
+    obs = env.reset(task_name=task_name, seed=SEED)
+
     done = False
     step_n = 0
     rewards: List[float] = []
-    episode_data: List[StepData] = []
-    
     success = True
-    final_score = 0.0
 
     while not done:
-        error_msg = "null"
         try:
-            action = agent.get_action(obs)
-            
-            # Calculate metrics corresponding to step context to form sequence data for the grader
-            heater_power = 5.0
-            lights_power = 0.5
-            energy = float((action.heater_control * heater_power) + (action.lights_control * lights_power))
-            
-            step_record = StepData(
-                energy=energy,
-                occupied=bool(obs.occupancy),
-                temp=float(obs.indoor_temperature),
-                heater_on=bool(action.heater_control),
-                lights_on=bool(action.lights_control)
-            )
-            episode_data.append(step_record)
-            
+            action = agent.get_action(obs, COMFORT_MIN, COMFORT_MAX)
             obs, reward, done, info = env.step(action)
             rewards.append(reward)
-            action_str = f"heater={action.heater_control},lights={action.lights_control}"
-            
+            logger.info(
+                f"step={step_n} "
+                f"temp={obs.indoor_temperature:.1f}°C "
+                f"occ={obs.occupancy_count} "
+                f"reward={reward:.3f} "
+                f"done={done} "
+                f"cost=₹{info.get('total_cost_inr', 0):.1f}"
+            )
         except Exception as e:
-            error_msg = str(e)
-            action_str = "error"
-            reward = 0.0
-            done = True
+            logger.error(f"Step error at step {step_n}: {e}")
             success = False
-
-        print(f"[STEP] step={step_n} action={action_str} reward={reward:.2f} done={str(done).lower()} error={error_msg}")
-        sys.stdout.flush()
+            done = True
         step_n += 1
 
+    # Grade
+    final_score = 0.0
     try:
-        final_score = evaluate_episode(task_name, episode_data)
+        final_score = env.grade()
     except Exception as e:
-        success = False
-        final_score = 0.0
-        print(f"Error during final evaluation: {e}")
-        sys.stdout.flush()
+        logger.error(f"Grading error: {e}")
 
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={step_n} score={final_score:.4f} rewards={rewards_str}")
-    sys.stdout.flush()
+    rewards_summary = ",".join(f"{r:.3f}" for r in rewards[:5]) + ("..." if len(rewards) > 5 else "")
+    logger.info(
+        f"END success={success} steps={step_n} score={final_score:.4f} "
+        f"total_cost=₹{env.total_cost_inr:.1f} "
+        f"co2={env.total_co2_kg:.2f}kg "
+        f"rewards_sample=[{rewards_summary}]"
+    )
+
+    save_episode_results(task_name, final_score, rewards, env.episode_data, SEED, MODEL_NAME)
+    return final_score
+
+
+def load_config() -> dict:
+    """Load scenario_config.json if present, else return empty dict."""
+    config_path = Path("scenario_config.json")
+    if config_path.exists():
+        with open(config_path) as f:
+            return json.load(f)
+    return {}
+
 
 if __name__ == "__main__":
-    tasks_to_run = ["basic_thermostat", "day_night_control", "multiday_optimization"]
+    config = load_config()
+    # Run the task specified in config, or default to all tasks
+    task_override = config.get("task_name", None)
+
+    if task_override:
+        tasks_to_run = [task_override]
+    else:
+        tasks_to_run = ["basic_thermostat", "day_night_tou", "load_shedding_optimizer"]
+
     for task in tasks_to_run:
-        run_inference(task)
+        run_inference(task, config)
