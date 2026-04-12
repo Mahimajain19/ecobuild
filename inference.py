@@ -192,7 +192,7 @@ def run_inference(task_name: str, config: dict):
         MODEL_NAME = "baseline-rule-based"
         agent = BaselineAgent()
 
-    logger.info(f"START task={task_name} model={MODEL_NAME} seed={SEED}")
+    print(f"[START] task={task_name} model={MODEL_NAME} seed={SEED}")
 
     env = EcoBuildEnvironment()
     obs = env.reset(task_name=task_name, seed=SEED)
@@ -207,13 +207,13 @@ def run_inference(task_name: str, config: dict):
             action = agent.get_action(obs, COMFORT_MIN, COMFORT_MAX)
             obs, reward, done, info = env.step(action)
             rewards.append(reward)
-            logger.info(
-                f"step={step_n} "
-                f"temp={obs.indoor_temperature:.1f}°C "
+            print(
+                f"[STEP] step={step_n} "
+                f"temp={obs.indoor_temperature:.1f}C "
                 f"occ={obs.occupancy_count} "
                 f"reward={reward:.3f} "
                 f"done={done} "
-                f"cost=₹{info.get('total_cost_inr', 0):.1f}"
+                f"cost=INR{info.get('total_cost_inr', 0):.1f}"
             )
         except Exception as e:
             logger.error(f"Step error at step {step_n}: {e}")
@@ -229,9 +229,9 @@ def run_inference(task_name: str, config: dict):
         logger.error(f"Grading error: {e}")
 
     rewards_summary = ",".join(f"{r:.3f}" for r in rewards[:5]) + ("..." if len(rewards) > 5 else "")
-    logger.info(
-        f"END success={success} steps={step_n} score={final_score:.4f} "
-        f"total_cost=₹{env.total_cost_inr:.1f} "
+    print(
+        f"[END] success={success} steps={step_n} score={final_score:.4f} "
+        f"total_cost=INR{env.total_cost_inr:.1f} "
         f"co2={env.total_co2_kg:.2f}kg "
         f"rewards_sample=[{rewards_summary}]"
     )
